@@ -194,67 +194,121 @@ def write_gmaps_csvs(by_tier: dict[str, list[dict]]) -> None:
             print(f"[gmaps] {path.name}: {len(chunk)} rows")
 
 
-def write_kml(by_tier: dict[str, list[dict]]) -> None:
-    """Single KML with one <Folder> per tier — a colored pin style each.
+def _placemark(tier: str, r: dict) -> str:
+    try:
+        lat = float(r["lat"]); lng = float(r["lng"])
+    except (TypeError, ValueError):
+        return ""
+    name = escape(r["name"] or "(unnamed)")
+    city = escape(r.get("city", ""))
+    country = escape(r.get("country", ""))
+    cuisine = escape(r.get("cuisine", ""))
+    price = escape(r.get("price", ""))
+    url = escape(r.get("url", ""))
+    phone = escape(r.get("phone", ""))
+    year = escape(str(r.get("year_awarded", "")))
+    reserv = escape(r.get("accepts_reservations", ""))
+    image = escape(r.get("image", ""))
+    short_desc = escape((r.get("description") or "")[:220])
 
-    Google My Maps supports KML import; folders become layers.
+    img_html = f"<img src='{image}' width='240'><br>" if image else ""
+    year_html = f" &middot; awarded {year}" if year else ""
+    phone_html = f"<br>{phone}" if phone else ""
+    reserv_html = f"<br>Reservations: {reserv}" if reserv else ""
+    desc = (
+        f"<![CDATA[{img_html}"
+        f"<b>{tier}</b>{year_html} &middot; {cuisine} &middot; {price}<br>"
+        f"{city}, {country}"
+        f"{phone_html}{reserv_html}<br>"
+        f"<a href='{url}'>MICHELIN Guide page</a><br><br>"
+        f"<i>{short_desc}</i>]]>"
+    )
+    return (
+        "<Placemark>\n"
+        f"  <name>{name}</name>\n"
+        f'  <styleUrl>#s-{tier.replace(" ", "-")}</styleUrl>\n'
+        f"  <description>{desc}</description>\n"
+        f"  <Point><coordinates>{lng},{lat},0</coordinates></Point>\n"
+        "</Placemark>\n"
+    )
+
+
+def _write_kml(path: Path, doc_name: str, tier_folders: list[tuple[str, list[dict]]]) -> None:
+    """Write a KML with one <Folder> per (tier_label, rows) tuple.
+
+    tier_label is the human-readable folder label ("1 Star", "1 Star (part 1)", …).
+    The styling <styleUrl> derives from the first token, so parts share the same pin color.
     """
-    path = OUT / "michelin.kml"
     with path.open("w", encoding="utf-8") as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write('<kml xmlns="http://www.opengis.net/kml/2.2">\n')
-        f.write("<Document>\n")
-        f.write("<name>MICHELIN Guide restaurants</name>\n")
-        for tier, color in TIER_COLORS.items():
-            f.write(f'<Style id="s-{tier.replace(" ", "-")}">\n')
+        f.write(f"<Document>\n<name>{escape(doc_name)}</name>\n")
+        for base_tier, color in TIER_COLORS.items():
+            f.write(f'<Style id="s-{base_tier.replace(" ", "-")}">\n')
             f.write("  <IconStyle>\n")
             f.write(f"    <color>{color}</color><scale>1.0</scale>\n")
             f.write('    <Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href></Icon>\n')
             f.write("  </IconStyle>\n")
             f.write("</Style>\n")
-        for tier in TIER_ORDER:
-            rows = by_tier.get(tier, [])
-            if not rows:
-                continue
-            f.write(f"<Folder><name>{escape(tier)} ({len(rows)})</name>\n")
+        for folder_label, rows in tier_folders:
+            base_tier = folder_label.split(" (")[0]  # "1 Star (part 1)" -> "1 Star"
+            f.write(f"<Folder><name>{escape(folder_label)} ({len(rows)})</name>\n")
             for r in rows:
-                try:
-                    lat = float(r["lat"]); lng = float(r["lng"])
-                except (TypeError, ValueError):
-                    continue
-                name = escape(r["name"] or "(unnamed)")
-                city = escape(r.get("city", ""))
-                country = escape(r.get("country", ""))
-                cuisine = escape(r.get("cuisine", ""))
-                price = escape(r.get("price", ""))
-                url = escape(r.get("url", ""))
-                phone = escape(r.get("phone", ""))
-                year = escape(str(r.get("year_awarded", "")))
-                reserv = escape(r.get("accepts_reservations", ""))
-                image = escape(r.get("image", ""))
-                short_desc = escape((r.get("description") or "")[:220])
-
-                img_html = f"<img src='{image}' width='240'><br>" if image else ""
-                year_html = f" &middot; awarded {year}" if year else ""
-                phone_html = f"<br>{phone}" if phone else ""
-                reserv_html = f"<br>Reservations: {reserv}" if reserv else ""
-                desc = (
-                    f"<![CDATA[{img_html}"
-                    f"<b>{tier}</b>{year_html} &middot; {cuisine} &middot; {price}<br>"
-                    f"{city}, {country}"
-                    f"{phone_html}{reserv_html}<br>"
-                    f"<a href='{url}'>MICHELIN Guide page</a><br><br>"
-                    f"<i>{short_desc}</i>]]>"
-                )
-                f.write("<Placemark>\n")
-                f.write(f"  <name>{name}</name>\n")
-                f.write(f'  <styleUrl>#s-{tier.replace(" ", "-")}</styleUrl>\n')
-                f.write(f"  <description>{desc}</description>\n")
-                f.write(f"  <Point><coordinates>{lng},{lat},0</coordinates></Point>\n")
-                f.write("</Placemark>\n")
+                f.write(_placemark(base_tier, r))
             f.write("</Folder>\n")
         f.write("</Document></kml>\n")
-    print(f"[kml] {path.name}")
+    size_mb = path.stat().st_size / (1024 * 1024)
+    print(f"[kml] {path.name}: {sum(len(rs) for _, rs in tier_folders)} pins, {size_mb:.1f} MB")
+
+
+def _folders_from(by_tier: dict[str, list[dict]], tiers: list[str], layer_cap: int) -> list[tuple[str, list[dict]]]:
+    """Split each tier into <=layer_cap layers, in TIER_ORDER, skipping empties."""
+    folders: list[tuple[str, list[dict]]] = []
+    for tier in tiers:
+        rows = by_tier.get(tier, [])
+        if not rows:
+            continue
+        if len(rows) <= layer_cap:
+            folders.append((tier, rows))
+        else:
+            for i, start in enumerate(range(0, len(rows), layer_cap), 1):
+                folders.append((f"{tier} (part {i})", rows[start:start + layer_cap]))
+    return folders
+
+
+def write_kmls(by_tier: dict[str, list[dict]]) -> None:
+    """Emit:
+    - michelin.kml                  everything, single file (Google Earth, GIS)
+    - gmaps_kml_stars.kml           3+2+1 stars — fits one Google My Maps
+    - gmaps_kml_bib-gourmand.kml    Bib Gourmand only
+    - gmaps_kml_selected_partN.kml  Selected, split so each < ~5 MB / < 10k features
+    """
+    # Master (unrestricted).
+    all_folders = _folders_from(by_tier, TIER_ORDER, layer_cap=2000)
+    _write_kml(OUT / "michelin.kml", "MICHELIN Guide — all restaurants", all_folders)
+
+    # Stars (3+2+1) — 3,876 total, easily under Google My Maps' 10k features / 5 MB.
+    stars_folders = _folders_from(by_tier, ["3 Star", "2 Star", "1 Star"], layer_cap=2000)
+    _write_kml(OUT / "gmaps_kml_stars.kml", "MICHELIN Stars", stars_folders)
+
+    # Bib Gourmand alone — ~3.7k, one map with 2 layers.
+    bib_folders = _folders_from(by_tier, ["Bib Gourmand"], layer_cap=2000)
+    if bib_folders:
+        _write_kml(OUT / "gmaps_kml_bib-gourmand.kml", "MICHELIN Bib Gourmand", bib_folders)
+
+    # Selected tier — huge. Split into ~4k / map so each stays under 5 MB and
+    # under 10k features. Layers still capped at 2000.
+    selected = by_tier.get("Selected", [])
+    MAP_CAP = 4000  # per file, before layer split
+    parts = [selected[i:i + MAP_CAP] for i in range(0, len(selected), MAP_CAP)]
+    for i, chunk in enumerate(parts, 1):
+        pseudo = {"Selected": chunk}
+        chunk_folders = _folders_from(pseudo, ["Selected"], layer_cap=2000)
+        _write_kml(
+            OUT / f"gmaps_kml_selected_part{i}.kml",
+            f"MICHELIN Selected (part {i}/{len(parts)})",
+            chunk_folders,
+        )
 
 
 def main() -> None:
@@ -275,7 +329,7 @@ def main() -> None:
 
     write_master_csv(rows)
     write_gmaps_csvs(by_tier)
-    write_kml(by_tier)
+    write_kmls(by_tier)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+data/*.log
+data/enumerate_failed_pages.txt
+data/failed.txt
+# jsonl is being written by the scraper while the initial commit happens;
+# added in the second commit once the global scrape completes.
+data/restaurants.jsonl

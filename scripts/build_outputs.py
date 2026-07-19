@@ -21,7 +21,7 @@ from collections import defaultdict, Counter
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent
 JSONL = ROOT / "data" / "restaurants.jsonl"
 OUT = ROOT / "outputs"
 OUT.mkdir(exist_ok=True)

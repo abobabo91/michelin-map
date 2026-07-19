@@ -32,7 +32,7 @@ BASE = "https://guide.michelin.com"
 LIST_URL = f"{BASE}/gb/en/restaurants"
 IMPERSONATE = "safari17_0"
 
-DATA = Path(__file__).parent / "data"
+DATA = Path(__file__).resolve().parent.parent / "data"
 DATA.mkdir(exist_ok=True)
 
 URLS_FILE = DATA / "urls.txt"

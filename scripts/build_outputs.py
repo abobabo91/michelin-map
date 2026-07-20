@@ -276,39 +276,57 @@ def _folders_from(by_tier: dict[str, list[dict]], tiers: list[str], layer_cap: i
     return folders
 
 
-def write_kmls(by_tier: dict[str, list[dict]]) -> None:
+# Regional groupings. Country codes are what Michelin puts in addressCountry (ISO-3).
+# Each region's total pin count stays under ~5,000 so the KML file is under 5 MB and
+# the whole map fits Google My Maps' 10,000-features-per-map cap.
+REGIONS: list[tuple[str, str, list[str]]] = [
+    ("france-monaco",     "France & Monaco",                    ["FRA", "MCO"]),
+    ("italy-malta",       "Italy & Malta",                      ["ITA", "MLT"]),
+    ("iberia",            "Iberia (Spain, Portugal, Andorra)",  ["ESP", "PRT", "AND"]),
+    ("uk-ireland",        "UK & Ireland",                       ["GBR", "IRL"]),
+    ("dach",              "DACH (Germany, Austria, Switzerland, Liechtenstein)",
+                                                                ["DEU", "AUT", "CHE", "LIE"]),
+    ("benelux",           "Benelux (Belgium, Netherlands, Luxembourg)",
+                                                                ["BEL", "NLD", "LUX"]),
+    ("europe-rest",       "Rest of Europe (Nordic, Baltic, Central & Eastern, Balkans, Greece, Turkey)",
+                          ["DNK","SWE","NOR","FIN","ISL","POL","CZE","HUN","HRV","SVN",
+                           "SRB","LTU","EST","LVA","GRC","TUR"]),
+    ("asia-mideast",      "Asia, Middle East & New Zealand",
+                          ["JPN","CHN","THA","TWN","SGP","KOR","HKG","VNM","MYS",
+                           "PHL","MAC","NZL","ARE","SAU","QAT"]),
+    ("americas",          "Americas (USA, Canada, Mexico, Brazil, Argentina)",
+                                                                ["USA","CAN","MEX","BRA","ARG"]),
+]
+
+
+def write_kmls(rows: list[dict], by_tier: dict[str, list[dict]]) -> None:
     """Emit:
-    - michelin.kml                  everything, single file (Google Earth, GIS)
-    - gmaps_kml_stars.kml           3+2+1 stars — fits one Google My Maps
-    - gmaps_kml_bib-gourmand.kml    Bib Gourmand only
-    - gmaps_kml_selected_partN.kml  Selected, split so each < ~5 MB / < 10k features
+    - michelin.kml                     master, all pins, single file (Google Earth, GIS)
+    - gmaps_kml_<region-slug>.kml      one file per region, sized for Google My Maps
     """
-    # Master (unrestricted).
+    # Master (unrestricted — for Google Earth / QGIS).
     all_folders = _folders_from(by_tier, TIER_ORDER, layer_cap=2000)
     _write_kml(OUT / "michelin.kml", "MICHELIN Guide — all restaurants", all_folders)
 
-    # Stars (3+2+1) — 3,876 total, easily under Google My Maps' 10k features / 5 MB.
-    stars_folders = _folders_from(by_tier, ["3 Star", "2 Star", "1 Star"], layer_cap=2000)
-    _write_kml(OUT / "gmaps_kml_stars.kml", "MICHELIN Stars", stars_folders)
+    # One KML per region, with the pins inside each region grouped by tier so pin
+    # colors still separate them cleanly on the map.
+    covered = set()
+    for slug, label, countries in REGIONS:
+        covered.update(countries)
+        region_rows = [r for r in rows if r["country"] in countries]
+        if not region_rows:
+            continue
+        region_by_tier: dict[str, list[dict]] = defaultdict(list)
+        for r in region_rows:
+            region_by_tier[r["tier"]].append(r)
+        folders = _folders_from(region_by_tier, TIER_ORDER, layer_cap=2000)
+        _write_kml(OUT / f"gmaps_kml_{slug}.kml", f"MICHELIN — {label}", folders)
 
-    # Bib Gourmand alone — ~3.7k, one map with 2 layers.
-    bib_folders = _folders_from(by_tier, ["Bib Gourmand"], layer_cap=2000)
-    if bib_folders:
-        _write_kml(OUT / "gmaps_kml_bib-gourmand.kml", "MICHELIN Bib Gourmand", bib_folders)
-
-    # Selected tier — huge. Split into ~4k / map so each stays under 5 MB and
-    # under 10k features. Layers still capped at 2000.
-    selected = by_tier.get("Selected", [])
-    MAP_CAP = 4000  # per file, before layer split
-    parts = [selected[i:i + MAP_CAP] for i in range(0, len(selected), MAP_CAP)]
-    for i, chunk in enumerate(parts, 1):
-        pseudo = {"Selected": chunk}
-        chunk_folders = _folders_from(pseudo, ["Selected"], layer_cap=2000)
-        _write_kml(
-            OUT / f"gmaps_kml_selected_part{i}.kml",
-            f"MICHELIN Selected (part {i}/{len(parts)})",
-            chunk_folders,
-        )
+    # Sanity check: any country in the data we forgot to place?
+    seen_countries = {r["country"] for r in rows if r["country"]}
+    missing = sorted(seen_countries - covered)
+    if missing:
+        print(f"[warn] countries not placed into a region: {missing}")
 
 
 def main() -> None:
@@ -329,7 +347,7 @@ def main() -> None:
 
     write_master_csv(rows)
     write_gmaps_csvs(by_tier)
-    write_kmls(by_tier)
+    write_kmls(rows, by_tier)
 
 
 if __name__ == "__main__":

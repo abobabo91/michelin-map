@@ -35,17 +35,22 @@ Google My Maps caps you at 10,000 features and 5 MB per map, so the 19k pins are
 
 | Region | File | Pins |
 | --- | --- | ---: |
-| France & Monaco | [`outputs/gmaps_kml_france-monaco.kml`](outputs/gmaps_kml_france-monaco.kml) | 3,070 |
+| France North (Paris, Loire, Alsace, Brittany, Normandy) | [`outputs/gmaps_kml_france-north.kml`](outputs/gmaps_kml_france-north.kml) | 1,713 |
+| France South (Lyon, Provence, Occitania, Aquitaine, Corsica) & Monaco | [`outputs/gmaps_kml_france-south-monaco.kml`](outputs/gmaps_kml_france-south-monaco.kml) | 1,357 |
 | Italy & Malta | [`outputs/gmaps_kml_italy-malta.kml`](outputs/gmaps_kml_italy-malta.kml) | 2,039 |
 | Iberia (Spain, Portugal, Andorra) | [`outputs/gmaps_kml_iberia.kml`](outputs/gmaps_kml_iberia.kml) | 1,540 |
 | UK & Ireland | [`outputs/gmaps_kml_uk-ireland.kml`](outputs/gmaps_kml_uk-ireland.kml) | 1,241 |
 | DACH (Germany, Austria, Switzerland, Liechtenstein) | [`outputs/gmaps_kml_dach.kml`](outputs/gmaps_kml_dach.kml) | 2,201 |
 | Benelux (Belgium, Netherlands, Luxembourg) | [`outputs/gmaps_kml_benelux.kml`](outputs/gmaps_kml_benelux.kml) | 1,258 |
 | Rest of Europe (Nordics, Baltics, Central & Eastern, Balkans, Greece, Turkey) | [`outputs/gmaps_kml_europe-rest.kml`](outputs/gmaps_kml_europe-rest.kml) | 1,150 |
-| Asia, Middle East & New Zealand | [`outputs/gmaps_kml_asia-mideast.kml`](outputs/gmaps_kml_asia-mideast.kml) | 4,463 |
+| Japan & South Korea | [`outputs/gmaps_kml_japan-korea.kml`](outputs/gmaps_kml_japan-korea.kml) | 1,349 |
+| Greater China (China, Taiwan, Hong Kong, Macau) | [`outputs/gmaps_kml_greater-china.kml`](outputs/gmaps_kml_greater-china.kml) | 1,498 |
+| Southeast Asia, Oceania & Middle East | [`outputs/gmaps_kml_se-asia-oceania-mideast.kml`](outputs/gmaps_kml_se-asia-oceania-mideast.kml) | 1,616 |
 | Americas (USA, Canada, Mexico, Brazil, Argentina) | [`outputs/gmaps_kml_americas.kml`](outputs/gmaps_kml_americas.kml) | 2,543 |
 
 For each: [mymaps.google.com](https://www.google.com/maps/d/) → **Create a new map** → **Import** → drop the file. Inside each region the pins are grouped by tier (3-Star, 2-Star, 1-Star, Bib Gourmand, Selected) so you can toggle them independently.
+
+Each pin's popup shows tier, cuisine, price, year awarded, city, full address, phone, reservations info, menu language, accepted payment methods, a photo, and a link to the full MICHELIN Guide page — all via KML `ExtendedData` so Google My Maps renders it as a clean, consistent field table.
 
 **On your phone:** Google Maps app → **You** → **Maps** → tap any imported map. Pins are tappable; the MICHELIN link opens in your browser.
 

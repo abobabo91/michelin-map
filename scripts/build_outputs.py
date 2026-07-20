@@ -195,39 +195,60 @@ def write_gmaps_csvs(by_tier: dict[str, list[dict]]) -> None:
 
 
 def _placemark(tier: str, r: dict) -> str:
+    """One <Placemark>.
+
+    We emit BOTH:
+    - <ExtendedData>: reliable structured fields Google My Maps always shows
+      as a labeled table in the pin popup.
+    - <description> HTML: rich formatted popup for Google Earth (which ignores
+      ExtendedData tables and prefers the description).
+    """
     try:
         lat = float(r["lat"]); lng = float(r["lng"])
     except (TypeError, ValueError):
         return ""
     name = escape(r["name"] or "(unnamed)")
-    city = escape(r.get("city", ""))
-    country = escape(r.get("country", ""))
-    cuisine = escape(r.get("cuisine", ""))
-    price = escape(r.get("price", ""))
-    url = escape(r.get("url", ""))
-    phone = escape(r.get("phone", ""))
-    year = escape(str(r.get("year_awarded", "")))
-    reserv = escape(r.get("accepts_reservations", ""))
-    image = escape(r.get("image", ""))
-    short_desc = escape((r.get("description") or "")[:220])
 
+    # Everything the user might want to see in a pin popup.
+    fields = [
+        ("Tier", tier),
+        ("Cuisine", r.get("cuisine", "")),
+        ("Price", r.get("price", "")),
+        ("Awarded", str(r.get("year_awarded", "") or "")),
+        ("City", r.get("city", "")),
+        ("Country", r.get("country", "")),
+        ("Address", r.get("address", "")),
+        ("Phone", r.get("phone", "")),
+        ("Reservations", r.get("accepts_reservations", "")),
+        ("Menu language", r.get("menu_language", "")),
+        ("Payment", r.get("payment_accepted", "")),
+        ("MICHELIN page", r.get("url", "")),
+        ("Photo", r.get("image", "")),
+        ("Description", (r.get("description") or "")[:400]),
+    ]
+    ext_lines = []
+    for k, v in fields:
+        if v in ("", None):
+            continue
+        ext_lines.append(
+            f'    <Data name="{escape(k)}"><value>{escape(str(v))}</value></Data>'
+        )
+    ext_data = "\n".join(ext_lines)
+
+    # Short description — just image + link. Keeps the KML small; all detail is
+    # already in ExtendedData above, which Google My Maps and Earth both render.
+    image = escape(r.get("image", ""))
+    url = escape(r.get("url", ""))
     img_html = f"<img src='{image}' width='240'><br>" if image else ""
-    year_html = f" &middot; awarded {year}" if year else ""
-    phone_html = f"<br>{phone}" if phone else ""
-    reserv_html = f"<br>Reservations: {reserv}" if reserv else ""
-    desc = (
-        f"<![CDATA[{img_html}"
-        f"<b>{tier}</b>{year_html} &middot; {cuisine} &middot; {price}<br>"
-        f"{city}, {country}"
-        f"{phone_html}{reserv_html}<br>"
-        f"<a href='{url}'>MICHELIN Guide page</a><br><br>"
-        f"<i>{short_desc}</i>]]>"
-    )
+    link_html = f"<a href='{url}'>MICHELIN Guide page</a>" if url else ""
+    desc_html = f"<![CDATA[{img_html}{link_html}]]>"
+
     return (
         "<Placemark>\n"
         f"  <name>{name}</name>\n"
         f'  <styleUrl>#s-{tier.replace(" ", "-")}</styleUrl>\n'
-        f"  <description>{desc}</description>\n"
+        f"  <ExtendedData>\n{ext_data}\n  </ExtendedData>\n"
+        f"  <description>{desc_html}</description>\n"
         f"  <Point><coordinates>{lng},{lat},0</coordinates></Point>\n"
         "</Placemark>\n"
     )
@@ -276,27 +297,64 @@ def _folders_from(by_tier: dict[str, list[dict]], tiers: list[str], layer_cap: i
     return folders
 
 
-# Regional groupings. Country codes are what Michelin puts in addressCountry (ISO-3).
-# Each region's total pin count stays under ~5,000 so the KML file is under 5 MB and
-# the whole map fits Google My Maps' 10,000-features-per-map cap.
-REGIONS: list[tuple[str, str, list[str]]] = [
-    ("france-monaco",     "France & Monaco",                    ["FRA", "MCO"]),
-    ("italy-malta",       "Italy & Malta",                      ["ITA", "MLT"]),
-    ("iberia",            "Iberia (Spain, Portugal, Andorra)",  ["ESP", "PRT", "AND"]),
-    ("uk-ireland",        "UK & Ireland",                       ["GBR", "IRL"]),
-    ("dach",              "DACH (Germany, Austria, Switzerland, Liechtenstein)",
-                                                                ["DEU", "AUT", "CHE", "LIE"]),
-    ("benelux",           "Benelux (Belgium, Netherlands, Luxembourg)",
-                                                                ["BEL", "NLD", "LUX"]),
-    ("europe-rest",       "Rest of Europe (Nordic, Baltic, Central & Eastern, Balkans, Greece, Turkey)",
-                          ["DNK","SWE","NOR","FIN","ISL","POL","CZE","HUN","HRV","SVN",
-                           "SRB","LTU","EST","LVA","GRC","TUR"]),
-    ("asia-mideast",      "Asia, Middle East & New Zealand",
-                          ["JPN","CHN","THA","TWN","SGP","KOR","HKG","VNM","MYS",
-                           "PHL","MAC","NZL","ARE","SAU","QAT"]),
-    ("americas",          "Americas (USA, Canada, Mexico, Brazil, Argentina)",
-                                                                ["USA","CAN","MEX","BRA","ARG"]),
+# Regional groupings. Each region's total pin count stays under ~4,500 so the KML
+# file is under 5 MB and the whole map fits Google My Maps' 10,000-features cap.
+# Country codes are what Michelin puts in addressCountry (ISO-3).
+# `lat_min` / `lat_max` further restrict a region to a latitude band — used to
+# split France (46°N) and USA (37°N) which are too big as single countries.
+REGIONS: list[dict] = [
+    {"slug": "france-north",
+     "label": "France (North: Paris, Loire, Alsace, Brittany, Normandy)",
+     "countries": ["FRA"], "lat_min": 46.0},
+    {"slug": "france-south-monaco",
+     "label": "France (South: Lyon, Provence, Occitania, Aquitaine, Corsica) & Monaco",
+     "countries": ["FRA", "MCO"], "lat_max": 46.0},
+    {"slug": "italy-malta",
+     "label": "Italy & Malta",
+     "countries": ["ITA", "MLT"]},
+    {"slug": "iberia",
+     "label": "Iberia (Spain, Portugal, Andorra)",
+     "countries": ["ESP", "PRT", "AND"]},
+    {"slug": "uk-ireland",
+     "label": "UK & Ireland",
+     "countries": ["GBR", "IRL"]},
+    {"slug": "dach",
+     "label": "DACH (Germany, Austria, Switzerland, Liechtenstein)",
+     "countries": ["DEU", "AUT", "CHE", "LIE"]},
+    {"slug": "benelux",
+     "label": "Benelux (Belgium, Netherlands, Luxembourg)",
+     "countries": ["BEL", "NLD", "LUX"]},
+    {"slug": "europe-rest",
+     "label": "Rest of Europe (Nordic, Baltic, Central & Eastern, Balkans, Greece, Turkey)",
+     "countries": ["DNK","SWE","NOR","FIN","ISL","POL","CZE","HUN","HRV","SVN",
+                   "SRB","LTU","EST","LVA","GRC","TUR"]},
+    {"slug": "japan-korea",
+     "label": "Japan & South Korea",
+     "countries": ["JPN","KOR"]},
+    {"slug": "greater-china",
+     "label": "Greater China (China, Taiwan, Hong Kong, Macau)",
+     "countries": ["CHN","TWN","HKG","MAC"]},
+    {"slug": "se-asia-oceania-mideast",
+     "label": "Southeast Asia, Oceania & Middle East",
+     "countries": ["THA","SGP","VNM","MYS","PHL","NZL","ARE","SAU","QAT"]},
+    {"slug": "americas",
+     "label": "Americas (USA, Canada, Mexico, Brazil, Argentina)",
+     "countries": ["USA","CAN","MEX","BRA","ARG"]},
 ]
+
+
+def _region_filter(r: dict, reg: dict) -> bool:
+    if r["country"] not in reg["countries"]:
+        return False
+    try:
+        lat = float(r["lat"])
+    except (TypeError, ValueError):
+        return True
+    if "lat_min" in reg and lat < reg["lat_min"]:
+        return False
+    if "lat_max" in reg and lat >= reg["lat_max"]:
+        return False
+    return True
 
 
 def write_kmls(rows: list[dict], by_tier: dict[str, list[dict]]) -> None:
@@ -310,23 +368,31 @@ def write_kmls(rows: list[dict], by_tier: dict[str, list[dict]]) -> None:
 
     # One KML per region, with the pins inside each region grouped by tier so pin
     # colors still separate them cleanly on the map.
-    covered = set()
-    for slug, label, countries in REGIONS:
-        covered.update(countries)
-        region_rows = [r for r in rows if r["country"] in countries]
+    covered_countries: set[str] = set()
+    placed_urls: set[str] = set()
+    for reg in REGIONS:
+        covered_countries.update(reg["countries"])
+        region_rows = [r for r in rows if _region_filter(r, reg)]
         if not region_rows:
             continue
+        for r in region_rows:
+            placed_urls.add(r["url"])
         region_by_tier: dict[str, list[dict]] = defaultdict(list)
         for r in region_rows:
             region_by_tier[r["tier"]].append(r)
         folders = _folders_from(region_by_tier, TIER_ORDER, layer_cap=2000)
-        _write_kml(OUT / f"gmaps_kml_{slug}.kml", f"MICHELIN — {label}", folders)
+        _write_kml(OUT / f"gmaps_kml_{reg['slug']}.kml", f"MICHELIN — {reg['label']}", folders)
 
-    # Sanity check: any country in the data we forgot to place?
+    # Sanity check: any country in the data we forgot to place, or any pin that
+    # slipped between two lat bands?
     seen_countries = {r["country"] for r in rows if r["country"]}
-    missing = sorted(seen_countries - covered)
-    if missing:
-        print(f"[warn] countries not placed into a region: {missing}")
+    missing_c = sorted(seen_countries - covered_countries)
+    unplaced_rows = [r for r in rows if r["url"] not in placed_urls]
+    if missing_c:
+        print(f"[warn] countries not in any region: {missing_c}")
+    if unplaced_rows:
+        print(f"[warn] {len(unplaced_rows)} rows not placed (probably no lat/lng): "
+              f"{[(r['name'], r['country']) for r in unplaced_rows[:5]]}")
 
 
 def main() -> None:
